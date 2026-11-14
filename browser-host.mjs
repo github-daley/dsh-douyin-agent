@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync, renameSync, existsSync, readFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, renameSync, existsSync, readFileSync, realpathSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -190,7 +190,13 @@ export async function runBrowserHost({ profile, controlDir, port, chromiumImpl =
     return { started: false, exitCode: 1, failure };
   }
 }
-if (process.argv[1] && path.resolve(process.argv[1]).toLowerCase() === fileURLToPath(import.meta.url).toLowerCase()) {
+function isMainEntry(file) {
+  if (!file) return false;
+  try { return realpathSync(file) === realpathSync(fileURLToPath(import.meta.url)); }
+  catch { return false; }
+}
+
+if (isMainEntry(process.argv[1])) {
   const [profile, controlDir, portText] = process.argv.slice(2);
   const result = await runBrowserHost({ profile, controlDir, port: Number(portText) });
   if (!result.started) process.exit(result.exitCode);

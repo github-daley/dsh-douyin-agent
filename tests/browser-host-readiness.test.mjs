@@ -2,6 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { mkdtemp, rm, symlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { dedicatedHostReadiness, dedicatedHostPlan, sameBrowserProfile } from '../core.mjs';
 
 const options = { pid: 200, profile: 'synthetic-dedicated-profile', port: 9227, processAlive: pid => pid === 200 };
@@ -46,4 +50,16 @@ test('仅本次目标进程退出才报告失败，不接受另一宿主或资�
   assert.equal(dedicatedHostReadiness({ ...state, port: 9228 }, options), 'foreign');
   assert.equal(dedicatedHostReadiness(state, { ...options, processAlive: () => false }), 'failed');
   assert.equal(dedicatedHostReadiness(state, { ...options, pid: null }), 'failed');
+});
+
+
+test('从目录链接执行时仍进入浏览器子进程入口', async t => {
+  const root = await mkdtemp(path.join(tmpdir(), 'douyin-host-link-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const source = fileURLToPath(new URL('../', import.meta.url));
+  const link = path.join(root, 'local-bundle');
+  await symlink(source, link, 'junction');
+  const child = spawn(process.execPath, [path.join(link, 'browser-host.mjs')], { stdio: 'ignore' });
+  const [code] = await once(child, 'exit');
+  assert.equal(code, 2, '应进入主入口并拒绝缺少的启动参数');
 });
