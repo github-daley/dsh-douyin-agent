@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { classifyBrowserLaunchError, probeEdgeInstallation, runBrowserHost } from '../browser-host.mjs';
+import { classifyBrowserLaunchError, dedicatedBrowser, probeDedicatedBrowser, probeEdgeInstallation, runBrowserHost } from '../browser-host.mjs';
 import { runDiagnostics } from '../diagnostics.mjs';
 
 test('Edge启动分类按实际宿主接口脱敏，明确协议unsupported才报告不兼容', () => {
@@ -88,4 +88,17 @@ test('宿主失败记录沿用launchFailure并脱敏，106仍实际尝试合成�
   const state = JSON.parse(fs.readFileSync(f.file, 'utf8'));
   assert.equal(state.ready, false); assert.equal(state.profile, f.paths.browserProfileDir); assert.equal(state.launchFailure.code, 'EDGE_VERSION_INCOMPATIBLE');
   assert.equal(state.launchFailure.browserVersion, '106.0.1370.52'); assert.doesNotMatch(JSON.stringify(state.launchFailure), /synthetic-secret|private|msedge\.exe/);
+});
+
+test('macOS 自检探测与启动选择 Google Chrome，缺少安装时不尝试读版本', async () => {
+  const browser = dedicatedBrowser('darwin');
+  let pathRead;
+  const installed = await probeDedicatedBrowser({ platform: 'darwin', exists: () => true, readVersion: async file => { pathRead = file; return '157.0.8103.52'; } });
+  assert.equal(pathRead, '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome');
+  assert.deepEqual(installed, { installed: true, version: '157.0.8103.52', channel: browser.channel });
+  const missing = await probeDedicatedBrowser({ platform: 'darwin', exists: () => false, readVersion: () => assert.fail('未安装，不应探测版本') });
+  assert.deepEqual(missing, { installed: false, version: null, channel: browser.channel });
+  const failure = classifyBrowserLaunchError(new Error("Chromium distribution 'chrome' is not found"), { browser });
+  assert.equal(failure.code, 'EDGE_MISSING');
+  assert.match(failure.message, /Google Chrome/);
 });

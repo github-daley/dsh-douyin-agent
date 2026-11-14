@@ -157,6 +157,7 @@
     "registry": "https://registry.npmjs.org/"
   },
   "os": [
+    "darwin",
     "win32"
   ],
   "peerDependencies": {

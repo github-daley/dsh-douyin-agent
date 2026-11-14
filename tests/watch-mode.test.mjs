@@ -3,12 +3,13 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { dedicatedBrowser } from '../browser-host.mjs';
 import { chromium } from '../playwright-runtime.mjs';
 import { WatchMode } from '../watch-mode.mjs';
 import { BrowserController } from '../core.mjs';
 
 let browser;
-before(async () => { browser = await chromium.launch({ channel: 'msedge', headless: true, args: ['--autoplay-policy=no-user-gesture-required'] }); });
+before(async () => { browser = await chromium.launch({ channel: dedicatedBrowser().channel, headless: true, args: ['--autoplay-policy=no-user-gesture-required'] }); });
 after(async () => { await browser?.close(); });
 const HTML = `<!doctype html><meta charset="utf-8"><title>合成静默播放</title><input id="focus" value="保留焦点"><video autoplay playsinline style="width:200px;height:240px"></video><script>
 const canvas=document.createElement('canvas');canvas.width=200;canvas.height=240;const painter=canvas.getContext('2d');let tick=0;
@@ -44,7 +45,7 @@ test('两入口共用静默许可且默认关闭，设置不接受模型扩权�
   assert.equal(fs.readFileSync(f.mode.policyFile, 'utf8'), '损坏的合成设置');
 });
 
-test('临时真实Edge页面持续静音且有实际播放进度，不改变音量、输入焦点、暂停或visibility', async t => {
+test('临时真实浏览器页面持续静音且有实际播放进度，不改变音量、输入焦点、暂停或visibility', async t => {
   const f = fixture(t), { page } = await pageFixture(t);
   await page.locator('#focus').focus();
   const before = await page.evaluate(() => { const video = document.querySelector('video'); video.volume = 0.37; return { time: video.currentTime, visibility: document.visibilityState, muted: video.muted }; });

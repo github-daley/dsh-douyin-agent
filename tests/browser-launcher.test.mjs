@@ -6,6 +6,7 @@ import path from 'node:path';
 import { once } from 'node:events';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { dedicatedBrowser } from '../browser-host.mjs';
 import { chromium } from '../playwright-runtime.mjs';
 import { BrowserLauncher, PREPARE_PAGE_NAME, connectDedicatedBrowser } from '../browser-launcher.mjs';
 import { createApiServer } from '../app.mjs';
@@ -15,7 +16,7 @@ const HTML = `<!doctype html><meta charset="utf-8"><title>合成准备页</title
 const canvas=document.createElement('canvas');canvas.width=200;canvas.height=240;const paint=canvas.getContext('2d');paint.fillRect(0,0,200,240);
 const video=document.querySelector('video');video.srcObject=canvas.captureStream(12);setInterval(()=>{paint.fillStyle=Date.now()%2?'red':'blue';paint.fillRect(0,0,200,240);},50);void video.play().catch(()=>{});</script>`;
 let browser;
-before(async () => { browser = await chromium.launch({ channel: 'msedge', headless: true }); });
+before(async () => { browser = await chromium.launch({ channel: dedicatedBrowser().channel, headless: true }); });
 after(async () => { await browser?.close(); });
 async function contextFixture(t) {
   const context = await browser.newContext(); t.after(() => context.close());
@@ -89,7 +90,7 @@ test('本机HTTP无需APIKey也能打开准备入口，仍校验token和空参�
   const result = await pending; assert.equal(result.status, 200); assert.equal((await result.json()).opened, true); assert.equal(opens, 1); assert.equal(bootstrap.config.configured, false);
 });
 
-test('真实临时Edge经核心openBrowser复用准备页和watch入口，有限轮次文件逐字节不变', { timeout: 30_000 }, async t => {
+test('真实临时浏览器经核心openBrowser复用准备页和watch入口，有限轮次文件逐字节不变', { timeout: 30_000 }, async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'douyin-launcher-core-')); const home = path.join(root, 'home'), temporary = path.join(root, 'tmp'), stateDir = path.join(root, 'state');
   for (const directory of [home, temporary, stateDir]) fs.mkdirSync(directory);
   t.after(() => { if (path.dirname(path.resolve(root)) !== path.resolve(os.tmpdir())) throw new Error('浏览器入口测试目录越界。'); fs.rmSync(root, { recursive: true, force: true }); });
@@ -98,7 +99,7 @@ import assert from 'node:assert/strict';import fs from 'node:fs';import path fro
 import {chromium} from ${JSON.stringify(new URL('../playwright-runtime.mjs', import.meta.url).href)};
 import {BrowserController} from ${JSON.stringify(new URL('../core.mjs', import.meta.url).href)};
 import {VideoLimits} from ${JSON.stringify(new URL('../video-limits.mjs', import.meta.url).href)};
-const browser=await chromium.launch({channel:'msedge',headless:true});
+const browser=await chromium.launch({channel:${JSON.stringify(dedicatedBrowser().channel)},headless:true});
 try{
  const context=await browser.newContext();await context.route('**/*',route=>route.fulfill({contentType:'text/html',body:${JSON.stringify(HTML)}}));
  const limits=new VideoLimits({stateDir:process.env.SYNTHETIC_LAUNCHER_STATE});

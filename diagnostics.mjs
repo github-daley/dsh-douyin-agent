@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { resolveRuntimePaths, resolveNodeExecutable } from './runtime-paths.mjs';
-import { probeEdgeInstallation, sanitizeBrowserFailure } from './browser-host.mjs';
+import { dedicatedBrowser, probeDedicatedBrowser, sanitizeBrowserFailure } from './browser-host.mjs';
 
 const execute = promisify(execFile);
 const VERSION = '1.4.7';
@@ -19,7 +19,6 @@ async function bounded(action, milliseconds = 8000) {
 }
 const failures = {
   node: ['NODE_UNAVAILABLE', '未找到可用的 Node.js 22.13+ 或 SQLite。', '安装 Node.js，或指定 DOUYIN_NODE_EXECUTABLE；不要把 DSH Desktop EXE 当作 Node。'],
-  browser: ['EDGE_MISSING', '未找到 Microsoft Edge。', '安装 Microsoft Edge 后重新自检。'],
   state: ['STATE_NOT_WRITABLE', '共享状态目录不可写。', '检查安装位置和目录权限，不要删除原状态文件。'],
   memory: ['MEMORY_NOT_WRITABLE', '共享记忆目录不可写。', '检查共享记忆目录权限，保留人格和记忆原文件。'],
   policy: ['POLICY_UNREADABLE', '时间或主题设置无法读取。', '保留原文件，在设置页核对；损坏文件需要人工处理。'],
@@ -29,7 +28,7 @@ const failures = {
 
 export async function runDiagnostics({ source = 'api', modelConfigured = false, videoLimits, watchService, optionsService, usageLedger,
   controller, modeService, watchSchedule, settingsTransport, interactionStates,
-  paths = resolveRuntimePaths(), nodeResolver = resolveNodeExecutable, probeNode, probeBrowserInstallation = probeEdgeInstallation, now = Date.now } = {}) {
+  paths = resolveRuntimePaths(), nodeResolver = resolveNodeExecutable, probeNode, probeBrowserInstallation = probeDedicatedBrowser, now = Date.now } = {}) {
   const checks = [];
   async function check(id, label, action) {
     try {
@@ -55,7 +54,8 @@ export async function runDiagnostics({ source = 'api', modelConfigured = false, 
   });
   await check('browser', '浏览器安装', async () => {
     const installed = await probeBrowserInstallation();
-    if (!installed?.installed) throw Error();
+    const { name, channel } = dedicatedBrowser(installed?.channel === 'msedge' ? 'win32' : undefined);
+    if (!installed?.installed) return { status: 'fail', code: 'EDGE_MISSING', message: `未找到 ${name}。`, resolution: resolution('user', [`安装 ${name} 后重新自检。`]) };
     const version = /^\d+\.\d+\.\d+\.\d+$/.test(installed.version || '') ? installed.version : null;
     let failed;
     try {
@@ -69,10 +69,10 @@ export async function runDiagnostics({ source = 'api', modelConfigured = false, 
     } catch {}
     if (failed) {
       const update = ['EDGE_LAUNCH_FAILED', 'EDGE_VERSION_INCOMPATIBLE'].includes(failed.code);
-      const steps = failed.code === 'BROWSER_PROFILE_IN_USE' ? ['正常关闭旧专用窗口后重试，不删除资料目录。'] : failed.code === 'EDGE_ACCESS_DENIED' ? ['检查系统权限、安全软件和专用资料目录权限。'] : update ? ['更新 Microsoft Edge 与抖音助手后重试；若仍失败，提交本自检报告。'] : ['核对 Microsoft Edge 安装后重新自检。'];
-      return { warning: true, code: failed.code, message: '最近一次专用浏览器启动失败：' + sanitizeBrowserFailure(failed.message), details: sanitizeBrowserFailure(failed.details), evidence: { browserVersion: /^\d+\.\d+\.\d+\.\d+$/.test(failed.browserVersion || '') ? failed.browserVersion : null, installedBrowserVersion: version, channel: 'msedge', failureAt: failed.at }, resolution: resolution(update ? 'update' : 'user', steps) };
+      const steps = failed.code === 'BROWSER_PROFILE_IN_USE' ? ['正常关闭旧专用窗口后重试，不删除资料目录。'] : failed.code === 'EDGE_ACCESS_DENIED' ? ['检查系统权限、安全软件和专用资料目录权限。'] : update ? ['更新 Microsoft Edge 与抖音助手后重试；若仍失败，提交本自检报告。'] : [`核对 ${name} 安装后重新自检。`];
+      return { warning: true, code: failed.code, message: '最近一次专用浏览器启动失败：' + sanitizeBrowserFailure(failed.message), details: sanitizeBrowserFailure(failed.details), evidence: { browserVersion: /^\d+\.\d+\.\d+\.\d+$/.test(failed.browserVersion || '') ? failed.browserVersion : null, installedBrowserVersion: version, channel, failureAt: failed.at }, resolution: resolution(update ? 'update' : 'user', steps) };
     }
-    return { warning: !version, ...(version ? {} : { code: 'EDGE_VERSION_UNKNOWN' }), message: version ? '标准路径 Microsoft Edge 版本 ' + version + '；连接、登录和静默效果另行检查，版本号本身不能证明运行兼容。' : '已找到标准路径 Microsoft Edge，但未读到文件版本；启动失败时请更新 Edge 并查看本机启动详情。', evidence: { browserVersion: version, channel: 'msedge' } };
+    return { warning: !version, ...(version ? {} : { code: 'EDGE_VERSION_UNKNOWN' }), message: version ? `标准路径 ${name} 版本 ${version}；连接、登录和静默效果另行检查，版本号本身不能证明运行兼容。` : `已找到标准路径 ${name}，但未读到版本；启动失败时请更新浏览器并查看本机启动详情。`, evidence: { browserVersion: version, channel } };
   });
   for (const [id, label, directory] of [['state', '共享状态目录', paths.stateDir], ['memory', '共享记忆目录', paths.memoryDir]]) await check(id, label, () => {
     fs.mkdirSync(directory, { recursive: true }); const probe = path.join(directory, `.selfcheck-${randomUUID()}`);

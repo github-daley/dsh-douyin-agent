@@ -21,7 +21,7 @@ function abortable(pending, signal, lateResult) {
   });
 }
 
-// 连接仍只指向已核对归属的专用 CDP；取消时仅断开新建连接，不关闭 Edge 进程。
+// 连接仍只指向已核对归属的专用 CDP；取消时仅断开新建连接，不关闭 浏览器进程。
 export async function connectDedicatedBrowser(endpoint, { signal, connect = (url, options) => chromium.connectOverCDP(url, options) } = {}) {
   cancelled(signal);
   try {
@@ -29,8 +29,8 @@ export async function connectDedicatedBrowser(endpoint, { signal, connect = (url
   } catch (error) {
     cancelled(signal);
     throw new Error(error?.name === 'TimeoutError'
-      ? '专用 Edge 的调试连接等候30秒仍未就绪。请在本工具的专用窗口关闭无响应标签页后重试。'
-      : '无法连接本工具的专用 Edge。请检查专用窗口是否仍可操作，完成系统提示后重试。');
+      ? '专用浏览器的调试连接等候30秒仍未就绪。请在本工具的专用窗口关闭无响应标签页后重试。'
+      : '无法连接本工具的专用浏览器。请检查专用窗口是否仍可操作，完成系统提示后重试。');
   }
 }
 
@@ -145,7 +145,7 @@ export class BrowserLauncher {
     let worker = this.getWatchState();
     if (worker) return this.showWatch(browser, worker, signal);
     const context = browser.contexts()[0];
-    if (!context) throw new Error('专用 Edge 没有可用资料窗口，请在专用窗口完成系统提示后重试。');
+    if (!context) throw new Error('专用浏览器没有可用资料窗口，请在专用窗口完成系统提示后重试。');
     if(this.preferExistingWatchPage){const existing=await this.existingWatchPage(browser,signal);if(existing){cancelled(signal);await abortable(existing.bringToFront(),signal);return{opened:true,mode:'watch',reused:true,paused:null,watchPreserved:true,activeWatch:false,sessionChanged:false,message:'已显示既有作品页，播放、草稿和页面保持原状。'};}}
     let page = await this.findPage(browser, PREPARE_PAGE_NAME, signal), reused = Boolean(page), claimable = false;
     worker = this.getWatchState(); if (worker) return this.showWatch(browser, worker, signal);

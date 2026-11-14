@@ -15,14 +15,21 @@ export function sanitizeBrowserFailure(value) {
     .replace(/[A-Za-z]:[\\/][^\r\n"'<>]*/g, '[本地路径]').replace(/\/(?:Users|home)\/[^\r\n"'<>]*/g, '[本地路径]')
     .split('\n').slice(0, 5).join('\n').slice(0, 1200);
 }
-export function classifyBrowserLaunchError(error, { version } = {}) {
+export function dedicatedBrowser(platform = process.platform) {
+  return platform === 'darwin'
+    ? { channel: 'chrome', name: 'Google Chrome' }
+    : { channel: 'msedge', name: 'Microsoft Edge' };
+}
+
+export function classifyBrowserLaunchError(error, { version, browser = dedicatedBrowser('win32') } = {}) {
   const raw = String(error?.message || error || ''), browserVersion = versionOf(version), details = sanitizeBrowserFailure(error?.stack || raw);
-  let code = 'EDGE_LAUNCH_FAILED', message = '专用 Microsoft Edge 启动后退出或未能就绪。请更新 Microsoft Edge 和抖音助手后重试；若仍失败，请提交自检中的启动详情。';
+  const { name } = browser;
+  let code = 'EDGE_LAUNCH_FAILED', message = `专用 ${name} 启动后退出或未能就绪。请更新 ${name} 和抖音助手后重试；若仍失败，请提交自检中的启动详情。`;
   if (/ProcessSingleton|user data directory|profile.*(?:in use|already)|资料目录.*占用/i.test(raw)) { code = 'BROWSER_PROFILE_IN_USE'; message = '专用资料目录正在被其他浏览器使用，请正常关闭旧专用窗口后重试；不要删除个人资料或重复启动。'; }
-  else if (/EACCES|EPERM|access is denied|permission denied/i.test(raw)) { code = 'EDGE_ACCESS_DENIED'; message = '系统权限或安全软件阻止了专用 Edge 启动，请检查浏览器及专用资料目录权限，不要删除原资料。'; }
-  else if (/ENOENT|Executable.*(?:does not exist|doesn.t exist|not found)|executable.*找不到/i.test(raw)) { code = 'EDGE_MISSING'; message = '未找到可启动的 Microsoft Edge，请核对 Edge 安装，再重新自检；本次没有安装或切换浏览器。'; }
-  else if (/unsupported.*(?:browser|version)|(?:browser|version).*(?:not supported|incompatible)|protocol.*(?:unsupported|not supported|unknown method)/i.test(raw)) { code = 'EDGE_VERSION_INCOMPATIBLE'; message = '启动异常明确报告浏览器版本或协议不兼容，请更新 Microsoft Edge 和抖音助手后重试。'; }
-  return { code, message: (browserVersion ? `标准路径 Edge 版本 ${browserVersion}。` : '未读取到标准路径 Edge 版本。') + message, browserVersion, details };
+  else if (/EACCES|EPERM|access is denied|permission denied/i.test(raw)) { code = 'EDGE_ACCESS_DENIED'; message = `系统权限或安全软件阻止了专用 ${name} 启动，请检查浏览器及专用资料目录权限，不要删除原资料。`; }
+  else if (/ENOENT|Executable.*(?:does not exist|doesn't exist|not found)|distribution.*(?:is not found|not installed)|executable.*找不到/i.test(raw)) { code = 'EDGE_MISSING'; message = `未找到可启动的 ${name}，请核对安装，再重新自检；本次没有安装或切换浏览器。`; }
+  else if (/unsupported.*(?:browser|version)|(?:browser|version).*(?:not supported|incompatible)|protocol.*(?:unsupported|not supported|unknown method)/i.test(raw)) { code = 'EDGE_VERSION_INCOMPATIBLE'; message = `启动异常明确报告浏览器版本或协议不兼容，请更新 ${name} 和抖音助手后重试。`; }
+  return { code, message: (browserVersion ? `标准路径 ${name} 版本 ${browserVersion}。` : `未读取到标准路径 ${name} 版本。`) + message, browserVersion, details };
 }
 async function readEdgeFileVersion(file) {
   if (process.platform !== 'win32' || !process.env.SystemRoot) return null;
@@ -40,7 +47,24 @@ export async function probeEdgeInstallation({ env = process.env, candidates, exi
   let version = null; try { version = versionOf(await readVersion(file)); } catch {}
   return { installed: true, version, channel: 'msedge' };
 }
-const focusFailure = error => Object.assign(new Error('专用 Edge 未能清除焦点模拟，已保留窗口和草稿，请重新自检。', { cause: error }), { code: 'EDGE_FOCUS_RESET_FAILED' });
+const MAC_CHROME_APP = '/Applications/Google Chrome.app';
+
+export async function probeDedicatedBrowser({ platform = process.platform, exists = existsSync, readVersion } = {}) {
+  if (platform !== 'darwin') return probeEdgeInstallation({ exists, readVersion });
+  const { channel } = dedicatedBrowser(platform);
+  const file = path.join(MAC_CHROME_APP, 'Contents', 'MacOS', 'Google Chrome');
+  if (!exists(file)) return { installed: false, version: null, channel };
+  let version = null;
+  try {
+    const raw = readVersion ? await readVersion(file) : (await execute('/usr/libexec/PlistBuddy', [
+      '-c', 'Print :CFBundleShortVersionString', path.join(MAC_CHROME_APP, 'Contents', 'Info.plist'),
+    ], { timeout: 3000, maxBuffer: 2048 })).stdout;
+    version = versionOf(raw);
+  } catch {}
+  return { installed: true, version, channel };
+}
+
+const focusFailure = error => Object.assign(new Error('专用浏览器未能清除焦点模拟，已保留窗口和草稿，请重新自检。', { cause: error }), { code: 'EDGE_FOCUS_RESET_FAILED' });
 
 // 只清除宿主自己引入的模拟，不激活窗口、不填写输入框。
 export async function installNativeFocusReset(context, { onFailure = () => {}, timeoutMs = 5000 } = {}) {
@@ -111,8 +135,9 @@ export async function installNativeFocusReset(context, { onFailure = () => {}, t
   } catch (error) { await close(); throw fault || focusFailure(error); }
 }
 
-export async function runBrowserHost({ profile, controlDir, port, chromiumImpl = chromium, probeInstallation = probeEdgeInstallation, logger = console, processImpl = process } = {}) {
+export async function runBrowserHost({ profile, controlDir, port, chromiumImpl = chromium, probeInstallation = probeDedicatedBrowser, logger = console, processImpl = process } = {}) {
   if (!profile || !controlDir || !Number.isInteger(port) || port < 1024 || port > 65535) return { started: false, exitCode: 2 };
+  const browser = dedicatedBrowser(processImpl.platform ?? process.platform);
   mkdirSync(controlDir, { recursive: true });
   const stateFile = path.join(controlDir, 'browser.json'), startedAt = Date.now(), instanceId = randomUUID(); let context, installation, focusFailed = false, closed = false, exited = false, readyPublished = false;
   const writeState = (ready, extra = {}, initial = false) => {
@@ -130,7 +155,7 @@ export async function runBrowserHost({ profile, controlDir, port, chromiumImpl =
     writeState(false, {}, true);
     try { installation = await probeInstallation(); } catch {}
     context = await chromiumImpl.launchPersistentContext(profile, {
-      channel: 'msedge', headless: false, viewport: null, ignoreDefaultArgs: ['--mute-audio'],
+      channel: browser.channel, headless: false, viewport: null, ignoreDefaultArgs: ['--mute-audio'],
       args: [`--remote-debugging-port=${port}`, '--remote-debugging-address=127.0.0.1', '--autoplay-policy=no-user-gesture-required'],
     });
     context.on('close', () => {
@@ -154,12 +179,12 @@ export async function runBrowserHost({ profile, controlDir, port, chromiumImpl =
     nativeFocus.assertHealthy();
     if (closed || !writeState(true, { browserVersion: versionOf(installation?.version) })) throw new Error('专用浏览器已退出或宿主归属已变化。');
     readyPublished = true;
-    logger.log('专用抖音 Edge 已启动。');
+    logger.log(`专用抖音 ${browser.name} 已启动。`);
     for (const signal of ['SIGINT', 'SIGTERM']) processImpl.on(signal, () => context.close().finally(() => exit(0)));
     return { started: true, exitCode: 0 };
   } catch (error) {
     try { await context?.close(); } catch {}
-    const failure = error.code === 'EDGE_FOCUS_RESET_FAILED' ? { code: error.code, message: error.message, browserVersion: versionOf(installation?.version), details: sanitizeBrowserFailure(error.cause?.stack || error.message) } : classifyBrowserLaunchError(error, { version: installation?.version });
+    const failure = error.code === 'EDGE_FOCUS_RESET_FAILED' ? { code: error.code, message: error.message, browserVersion: versionOf(installation?.version), details: sanitizeBrowserFailure(error.cause?.stack || error.message) } : classifyBrowserLaunchError(error, { version: installation?.version, browser });
     try { writeState(false, { launchFailure: { ...failure, at: Date.now() } }); } catch {}
     logger.error(failure.message + (failure.details ? '\n' + failure.details : ''));
     return { started: false, exitCode: 1, failure };
